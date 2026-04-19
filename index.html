@@ -10,6 +10,7 @@
         #ui {
             position: absolute; top: 20px; left: 20px; color: white;
             pointer-events: none; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 10px;
+            z-index: 10;
         }
         .score { font-size: 24px; font-weight: bold; color: #4CAF50; }
     </style>
@@ -25,8 +26,9 @@
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getDatabase, ref, set, onValue, onDisconnect, push, update as fbUpdate, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { getDatabase, ref, set, onValue, onDisconnect, push, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
+    // Firebase Configuration
     const firebaseConfig = {
         apiKey: "AIzaSyBuWWnqDX5mUra5pF3uuBxEVSKjcESifTk",
         authDomain: "gawynt-hub.firebaseapp.com",
@@ -38,6 +40,7 @@
         measurementId: "G-XLXGTVSPXT"
     };
 
+    // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
     const playerId = Math.floor(Math.random() * 1000000).toString();
@@ -76,28 +79,32 @@
         const dy = e.touches[0].clientY - touchStart.y;
         if (Math.abs(dx) > 5 || Math.abs(dy) > 5) mySnake.angle = Math.atan2(dy, dx);
     });
+    window.addEventListener('touchend', () => { touchStart = null; });
 
-    // --- ORB SYSTEM ---
-    // Generate an orb if none exist (Simple logic for prototype)
+    // --- DATABASE LISTENERS ---
     onValue(orbsRef, (snap) => {
         orbs = snap.val() || {};
+        // Maintain 15 orbs on the field
         if (Object.keys(orbs).length < 15) {
             const newOrb = push(orbsRef);
-            set(newOrb, { x: Math.random() * canvas.width, y: Math.random() * canvas.height, color: '#fff' });
+            set(newOrb, { x: Math.random() * canvas.width, y: Math.random() * canvas.height });
         }
     });
 
     onValue(ref(db, 'players'), (snap) => players = snap.val() || {});
     onDisconnect(playerRef).remove();
 
+    // --- LOGIC FUNCTIONS ---
     function checkCollisions() {
+        if (!isAlive) return;
+
         // 1. Food Collision
         Object.keys(orbs).forEach(key => {
             const orb = orbs[key];
             const dist = Math.hypot(mySnake.x - orb.x, mySnake.y - orb.y);
             if (dist < 15) {
                 remove(ref(db, `orbs/${key}`));
-                mySnake.length += 2; // Grow
+                mySnake.length += 2; 
             }
         });
 
@@ -120,26 +127,27 @@
     function update() {
         if (!isAlive) return;
 
-        // Desktop Steering
+        // Steering Logic
         if (!touchStart) {
             const dx = mouse.x - mySnake.x;
             const dy = mouse.y - mySnake.y;
             if (Math.hypot(dx, dy) > 10) mySnake.angle = Math.atan2(dy, dx);
         }
 
-        // Move
+        // Movement
         mySnake.x += Math.cos(mySnake.angle) * 3;
         mySnake.y += Math.sin(mySnake.angle) * 3;
 
-        // Body Management
+        // Body Growth/Trail
         mySnake.segments.unshift({ x: mySnake.x, y: mySnake.y });
         while (mySnake.segments.length > mySnake.length) mySnake.segments.pop();
 
         checkCollisions();
         set(playerRef, mySnake);
-        document.getElementById('scoreVal').innerText = mySnake.length;
+        document.getElementById('scoreVal').innerText = Math.floor(mySnake.length);
     }
 
+    // --- RENDERING ---
     function draw() {
         ctx.fillStyle = '#0a0a0a';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -147,9 +155,7 @@
         // Draw Orbs
         Object.values(orbs).forEach(orb => {
             ctx.fillStyle = '#fff';
-            ctx.shadowBlur = 10; ctx.shadowColor = '#fff';
             ctx.beginPath(); ctx.arc(orb.x, orb.y, 4, 0, Math.PI*2); ctx.fill();
-            ctx.shadowBlur = 0;
         });
 
         // Draw Snakes
@@ -161,6 +167,30 @@
                 ctx.arc(seg.x, seg.y, Math.max(8 - (i * 0.05), 3), 0, Math.PI*2);
                 ctx.fill();
             });
+
+            // --- OPONENT POINTER ARROWS ---
+            if (p.id !== playerId && isAlive) {
+                const dx = p.x - mySnake.x;
+                const dy = p.y - mySnake.y;
+                const dist = Math.hypot(dx, dy);
+                const angleToOpponent = Math.atan2(dy, dx);
+
+                if (dist > 150) { // Only show if away from player
+                    const arrowDist = 70; 
+                    const arrowX = mySnake.x + Math.cos(angleToOpponent) * arrowDist;
+                    const arrowY = mySnake.y + Math.sin(angleToOpponent) * arrowDist;
+
+                    ctx.save();
+                    ctx.translate(arrowX, arrowY);
+                    ctx.rotate(angleToOpponent);
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.moveTo(10, 0); ctx.lineTo(-5, -6); ctx.lineTo(-5, 6);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
         });
 
         update();
@@ -168,6 +198,11 @@
     }
 
     draw();
+
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    });
 </script>
 </body>
 </html>
