@@ -3,23 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Firebase Slither Multiplayer</title>
+    <title>Firebase Slither: Master Build</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #0a0a0a; font-family: sans-serif; touch-action: none; }
+        body { margin: 0; overflow: hidden; background: #050505; font-family: 'Segoe UI', sans-serif; touch-action: none; }
         canvas { display: block; }
         #ui {
             position: absolute; top: 20px; left: 20px; color: white;
-            pointer-events: none; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 10px;
-            z-index: 10; border: 1px solid #444;
+            pointer-events: none; background: rgba(0,0,0,0.7); padding: 15px; 
+            border-radius: 12px; border: 1px solid #333; z-index: 10;
         }
-        .score { font-size: 24px; font-weight: bold; color: #4CAF50; }
+        .score-box { font-size: 26px; font-weight: 800; color: #00ff88; }
+        .hint { font-size: 11px; color: #aaa; margin-top: 4px; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <div class="score">Length: <span id="scoreVal">0</span></div>
-    <div style="font-size: 11px; opacity: 0.8; margin-top: 5px;">Kill opponents to eat their remains!</div>
+    <div class="score-box">Length: <span id="scoreVal">20</span></div>
+    <div class="hint">Map: 3000x3000 | Kill others to grow!</div>
 </div>
 
 <canvas id="gameCanvas"></canvas>
@@ -28,6 +29,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import { getDatabase, ref, set, onValue, onDisconnect, push, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
+    // --- YOUR FIREBASE CONFIG ---
     const firebaseConfig = {
         apiKey: "AIzaSyBuWWnqDX5mUra5pF3uuBxEVSKjcESifTk",
         authDomain: "gawynt-hub.firebaseapp.com",
@@ -50,97 +52,111 @@
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
+    // --- MAP SETTINGS ---
+    const MAP_WIDTH = 3000;
+    const MAP_HEIGHT = 3000;
+
+    // --- GAME STATE ---
     let mySnake = {
         id: playerId,
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height,
+        x: MAP_WIDTH / 2,
+        y: MAP_HEIGHT / 2,
         segments: [],
         length: 20,
-        color: `hsl(${Math.random() * 360}, 80%, 60%)`,
-        angle: 0
+        color: `hsl(${Math.random() * 360}, 85%, 60%)`,
+        angle: Math.random() * Math.PI * 2
     };
 
     let players = {};
     let orbs = {};
     let isAlive = true;
+    let cameraX = 0;
+    let cameraY = 0;
+
+    // --- INPUT CONTROLS ---
     let mouse = { x: canvas.width/2, y: canvas.height/2 };
     let touchStart = null;
 
-    // --- INPUT ---
     window.addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
     window.addEventListener('touchstart', (e) => { touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY }; });
     window.addEventListener('touchmove', (e) => {
         if (!touchStart) return;
         const dx = e.touches[0].clientX - touchStart.x;
         const dy = e.touches[0].clientY - touchStart.y;
-        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) mySnake.angle = Math.atan2(dy, dx);
+        if (Math.hypot(dx, dy) > 5) mySnake.angle = Math.atan2(dy, dx);
     });
     window.addEventListener('touchend', () => { touchStart = null; });
 
-    // --- DATABASE ---
+    // --- REALTIME SYNC ---
     onValue(orbsRef, (snap) => {
         orbs = snap.val() || {};
-        if (Object.keys(orbs).length < 20) {
+        if (Object.keys(orbs).length < 50) {
             const newOrb = push(orbsRef);
-            set(newOrb, { x: Math.random() * canvas.width, y: Math.random() * canvas.height, value: 2, size: 4 });
+            set(newOrb, { x: Math.random() * MAP_WIDTH, y: Math.random() * MAP_HEIGHT, val: 2, size: 4, color: '#fff' });
         }
     });
 
-    onValue(ref(db, 'players'), (snap) => players = snap.val() || {});
+    onValue(ref(db, 'players'), (snap) => { players = snap.val() || {}; });
     onDisconnect(playerRef).remove();
 
-    // --- COLLISION & DEATH ---
+    // --- LOGIC ---
     function checkCollisions() {
         if (!isAlive) return;
 
         // 1. Eat Orbs
         Object.keys(orbs).forEach(key => {
             const orb = orbs[key];
-            const dist = Math.hypot(mySnake.x - orb.x, mySnake.y - orb.y);
-            if (dist < 20) {
+            if (Math.hypot(mySnake.x - orb.x, mySnake.y - orb.y) < 22) {
                 remove(ref(db, `orbs/${key}`));
-                mySnake.length += (orb.value || 2); 
+                mySnake.length += (orb.val || 2);
             }
         });
 
-        // 2. Hit Opponent = Death
+        // 2. Body Collisions (Hit someone = Die)
         Object.values(players).forEach(p => {
             if (p.id === playerId || !p.segments) return;
-            p.segments.forEach((seg, index) => {
-                // Skip the head for friendly passing, check body
-                if (index < 3) return; 
-                const dist = Math.hypot(mySnake.x - seg.x, mySnake.y - seg.y);
-                if (dist < 12) die();
+            p.segments.forEach((seg, i) => {
+                if (i < 5) return; 
+                if (Math.hypot(mySnake.x - seg.x, mySnake.y - seg.y) < 12) die();
             });
         });
     }
 
     function die() {
         isAlive = false;
-        // DROP REWARDS: Turn segments into orbs before deleting player
+        // DROP REWARDS (The Cannibal Logic)
         mySnake.segments.forEach((seg, i) => {
-            if (i % 3 === 0) { // Drop an orb every 3rd segment
-                const newOrb = push(orbsRef);
-                set(newOrb, { x: seg.x, y: seg.y, value: 5, size: 6, color: mySnake.color });
+            if (i % 4 === 0) {
+                const drop = push(orbsRef);
+                set(drop, { x: seg.x, y: seg.y, val: 6, size: 7, color: mySnake.color });
             }
         });
-        
         remove(playerRef);
-        alert("Game Over! You were eaten. Refresh to play again.");
+        alert("You died! Refresh to respawn.");
     }
 
     function update() {
         if (!isAlive) return;
 
+        // Steering
         if (!touchStart) {
-            const dx = mouse.x - mySnake.x;
-            const dy = mouse.y - mySnake.y;
-            if (Math.hypot(dx, dy) > 10) mySnake.angle = Math.atan2(dy, dx);
+            const dx = (mouse.x + cameraX) - mySnake.x;
+            const dy = (mouse.y + cameraY) - mySnake.y;
+            if (Math.hypot(dx, dy) > 15) mySnake.angle = Math.atan2(dy, dx);
         }
 
-        mySnake.x += Math.cos(mySnake.angle) * 3;
-        mySnake.y += Math.sin(mySnake.angle) * 3;
+        // --- MOVEMENT & BOUNDARY CONSTRICTION ---
+        let nextX = mySnake.x + Math.cos(mySnake.angle) * 3.5;
+        let nextY = mySnake.y + Math.sin(mySnake.angle) * 3.5;
 
+        mySnake.x = Math.max(0, Math.min(MAP_WIDTH, nextX));
+        mySnake.y = Math.max(0, Math.min(MAP_HEIGHT, nextY));
+
+        // Camera Follow
+        cameraX = mySnake.x - canvas.width / 2;
+        cameraY = mySnake.y - canvas.height / 2;
+
+        // Body update
         mySnake.segments.unshift({ x: mySnake.x, y: mySnake.y });
         while (mySnake.segments.length > mySnake.length) mySnake.segments.pop();
 
@@ -150,41 +166,42 @@
     }
 
     function draw() {
-        ctx.fillStyle = '#0a0a0a';
+        ctx.fillStyle = '#050505';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.translate(-cameraX, -cameraY);
+
+        // Draw Map Border (Red line at edge)
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 10;
+        ctx.strokeRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
 
         // Draw Orbs
         Object.values(orbs).forEach(orb => {
             ctx.fillStyle = orb.color || '#fff';
-            ctx.beginPath(); 
-            ctx.arc(orb.x, orb.y, orb.size || 4, 0, Math.PI*2); 
-            ctx.fill();
+            ctx.beginPath(); ctx.arc(orb.x, orb.y, orb.size || 4, 0, Math.PI*2); ctx.fill();
         });
 
-        // Draw Snakes & Pointers
+        // Draw All Players
         Object.values(players).forEach(p => {
             if (!p.segments) return;
-            
-            // Draw Body
             ctx.fillStyle = p.color;
             p.segments.forEach((seg, i) => {
                 ctx.beginPath();
-                ctx.arc(seg.x, seg.y, Math.max(9 - (i * 0.05), 3), 0, Math.PI*2);
+                ctx.arc(seg.x, seg.y, Math.max(10 - (i * 0.04), 3), 0, Math.PI*2);
                 ctx.fill();
             });
 
-            // Opponent Arrows
+            // Opponent Arrows (Points toward enemies)
             if (p.id !== playerId && isAlive) {
                 const dx = p.x - mySnake.x;
                 const dy = p.y - mySnake.y;
-                const dist = Math.hypot(dx, dy);
-                if (dist > 180) {
-                    const angle = Math.atan2(dy, dx);
-                    const arrowX = mySnake.x + Math.cos(angle) * 80;
-                    const arrowY = mySnake.y + Math.sin(angle) * 80;
+                if (Math.hypot(dx, dy) > 300) {
+                    const ang = Math.atan2(dy, dx);
                     ctx.save();
-                    ctx.translate(arrowX, arrowY);
-                    ctx.rotate(angle);
+                    ctx.translate(mySnake.x + Math.cos(ang)*80, mySnake.y + Math.sin(ang)*80);
+                    ctx.rotate(ang);
                     ctx.fillStyle = p.color;
                     ctx.beginPath();
                     ctx.moveTo(12, 0); ctx.lineTo(-6, -7); ctx.lineTo(-6, 7);
@@ -193,6 +210,8 @@
                 }
             }
         });
+
+        ctx.restore();
 
         update();
         requestAnimationFrame(draw);
