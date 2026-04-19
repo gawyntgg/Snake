@@ -2,30 +2,31 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Firebase Slither Clone</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Firebase Slither Multiplayer</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #0a0a0a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; touch-action: none; }
         canvas { display: block; }
         #ui {
-            position: absolute; top: 10px; left: 10px; color: white;
-            pointer-events: none; text-shadow: 1px 1px 2px black;
+            position: absolute; top: 20px; left: 20px; color: white;
+            pointer-events: none; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 10px;
         }
+        .score { font-size: 24px; font-weight: bold; color: #4CAF50; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <h2>Firebase Slither</h2>
-    <p>Move your mouse to steer.</p>
+    <div class="score">Length: <span id="scoreVal">0</span></div>
+    <div style="font-size: 12px; opacity: 0.8;">Desktop: Mouse to move | Mobile: Drag to steer</div>
 </div>
+
 <canvas id="gameCanvas"></canvas>
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getDatabase, ref, set, onValue, onDisconnect, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    import { getDatabase, ref, set, onValue, onDisconnect, push, update as fbUpdate, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    // Your provided configuration
     const firebaseConfig = {
         apiKey: "AIzaSyBuWWnqDX5mUra5pF3uuBxEVSKjcESifTk",
         authDomain: "gawynt-hub.firebaseapp.com",
@@ -37,95 +38,129 @@
         measurementId: "G-XLXGTVSPXT"
     };
 
-    // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
     const playerId = Math.floor(Math.random() * 1000000).toString();
     const playerRef = ref(db, `players/${playerId}`);
+    const orbsRef = ref(db, 'orbs');
 
-    // Game Constants & State
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+    // --- GAME STATE ---
     let mySnake = {
         id: playerId,
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
         segments: [],
-        color: `hsl(${Math.random() * 360}, 70%, 50%)`,
+        length: 20,
+        color: `hsl(${Math.random() * 360}, 80%, 60%)`,
         angle: 0
     };
 
-    let allPlayers = {};
+    let players = {};
+    let orbs = {};
+    let isAlive = true;
 
-    // Input Handling
-    window.addEventListener('mousemove', (e) => {
-        mouse.x = e.clientX;
-        mouse.y = e.clientY;
+    // --- INPUT HANDLING ---
+    let mouse = { x: canvas.width/2, y: canvas.height/2 };
+    let touchStart = null;
+
+    window.addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
+    window.addEventListener('touchstart', (e) => { touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY }; });
+    window.addEventListener('touchmove', (e) => {
+        if (!touchStart) return;
+        const dx = e.touches[0].clientX - touchStart.x;
+        const dy = e.touches[0].clientY - touchStart.y;
+        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) mySnake.angle = Math.atan2(dy, dx);
     });
 
-    // Remove player on disconnect
+    // --- ORB SYSTEM ---
+    // Generate an orb if none exist (Simple logic for prototype)
+    onValue(orbsRef, (snap) => {
+        orbs = snap.val() || {};
+        if (Object.keys(orbs).length < 15) {
+            const newOrb = push(orbsRef);
+            set(newOrb, { x: Math.random() * canvas.width, y: Math.random() * canvas.height, color: '#fff' });
+        }
+    });
+
+    onValue(ref(db, 'players'), (snap) => players = snap.val() || {});
     onDisconnect(playerRef).remove();
 
-    // Listen for other players
-    const playersRef = ref(db, 'players');
-    onValue(playersRef, (snapshot) => {
-        allPlayers = snapshot.val() || {};
-    });
+    function checkCollisions() {
+        // 1. Food Collision
+        Object.keys(orbs).forEach(key => {
+            const orb = orbs[key];
+            const dist = Math.hypot(mySnake.x - orb.x, mySnake.y - orb.y);
+            if (dist < 15) {
+                remove(ref(db, `orbs/${key}`));
+                mySnake.length += 2; // Grow
+            }
+        });
+
+        // 2. Snake Collision (Kill Logic)
+        Object.values(players).forEach(p => {
+            if (p.id === playerId || !p.segments) return;
+            p.segments.forEach(seg => {
+                const dist = Math.hypot(mySnake.x - seg.x, mySnake.y - seg.y);
+                if (dist < 10) die();
+            });
+        });
+    }
+
+    function die() {
+        isAlive = false;
+        alert("You crashed! Refresh to restart.");
+        remove(playerRef);
+    }
 
     function update() {
-        // 1. Calculate angle to mouse
-        const dx = mouse.x - mySnake.x;
-        const dy = mouse.y - mySnake.y;
-        mySnake.angle = Math.atan2(dy, dx);
+        if (!isAlive) return;
 
-        // 2. Move head
-        const speed = 3;
-        mySnake.x += Math.cos(mySnake.angle) * speed;
-        mySnake.y += Math.sin(mySnake.angle) * speed;
-
-        // 3. Update segments (Snake Trail)
-        mySnake.segments.unshift({ x: mySnake.x, y: mySnake.y });
-        if (mySnake.segments.length > 20) {
-            mySnake.segments.pop();
+        // Desktop Steering
+        if (!touchStart) {
+            const dx = mouse.x - mySnake.x;
+            const dy = mouse.y - mySnake.y;
+            if (Math.hypot(dx, dy) > 10) mySnake.angle = Math.atan2(dy, dx);
         }
 
-        // 4. Sync to Firebase (Throttled via RequestAnimationFrame)
+        // Move
+        mySnake.x += Math.cos(mySnake.angle) * 3;
+        mySnake.y += Math.sin(mySnake.angle) * 3;
+
+        // Body Management
+        mySnake.segments.unshift({ x: mySnake.x, y: mySnake.y });
+        while (mySnake.segments.length > mySnake.length) mySnake.segments.pop();
+
+        checkCollisions();
         set(playerRef, mySnake);
+        document.getElementById('scoreVal').innerText = mySnake.length;
     }
 
     function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Draw grid background
-        ctx.strokeStyle = '#222';
-        for(let i=0; i<canvas.width; i+=50) {
-            ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i, canvas.height); ctx.stroke();
-        }
-        for(let i=0; i<canvas.height; i+=50) {
-            ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(canvas.width, i); ctx.stroke();
-        }
+        // Draw Orbs
+        Object.values(orbs).forEach(orb => {
+            ctx.fillStyle = '#fff';
+            ctx.shadowBlur = 10; ctx.shadowColor = '#fff';
+            ctx.beginPath(); ctx.arc(orb.x, orb.y, 4, 0, Math.PI*2); ctx.fill();
+            ctx.shadowBlur = 0;
+        });
 
-        // Draw all players
-        Object.values(allPlayers).forEach(player => {
-            if (!player.segments) return;
-
-            ctx.fillStyle = player.color;
-            player.segments.forEach((seg, index) => {
-                const size = 10 - (index * 0.2); // Tapered tail
+        // Draw Snakes
+        Object.values(players).forEach(p => {
+            if (!p.segments) return;
+            ctx.fillStyle = p.color;
+            p.segments.forEach((seg, i) => {
                 ctx.beginPath();
-                ctx.arc(seg.x, seg.y, Math.max(size, 3), 0, Math.PI * 2);
+                ctx.arc(seg.x, seg.y, Math.max(8 - (i * 0.05), 3), 0, Math.PI*2);
                 ctx.fill();
             });
-            
-            // Draw Head
-            ctx.fillStyle = 'white';
-            ctx.beginPath();
-            ctx.arc(player.x, player.y, 5, 0, Math.PI * 2);
-            ctx.fill();
         });
 
         update();
@@ -133,11 +168,6 @@
     }
 
     draw();
-
-    window.addEventListener('resize', () => {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-    });
 </script>
 </body>
 </html>
