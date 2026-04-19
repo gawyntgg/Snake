@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Firebase Slither: Master Build</title>
+    <title>Snake Gawynt</title>
     <style>
         body { margin: 0; overflow: hidden; background: #050505; font-family: 'Segoe UI', sans-serif; touch-action: none; }
         canvas { display: block; }
@@ -13,12 +13,14 @@
             border-radius: 12px; border: 1px solid #333; z-index: 10;
         }
         .score-box { font-size: 26px; font-weight: 800; color: #00ff88; }
+        .title { font-size: 18px; font-weight: bold; color: #fff; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }
         .hint { font-size: 11px; color: #aaa; margin-top: 4px; }
     </style>
 </head>
 <body>
 
 <div id="ui">
+    <div class="title">Snake Gawynt</div>
     <div class="score-box">Length: <span id="scoreVal">20</span></div>
     <div class="hint">Map: 3000x3000 | Kill others to grow!</div>
 </div>
@@ -124,7 +126,7 @@
 
     function die() {
         isAlive = false;
-        // DROP REWARDS (The Cannibal Logic)
+        // DROP REWARDS (Dead snakes turn into food)
         mySnake.segments.forEach((seg, i) => {
             if (i % 4 === 0) {
                 const drop = push(orbsRef);
@@ -132,7 +134,7 @@
             }
         });
         remove(playerRef);
-        alert("You died! Refresh to respawn.");
+        alert("Game Over! Refresh to respawn.");
     }
 
     function update() {
@@ -172,7 +174,7 @@
         ctx.save();
         ctx.translate(-cameraX, -cameraY);
 
-        // Draw Map Border (Red line at edge)
+        // Draw Map Border
         ctx.strokeStyle = '#ff0000';
         ctx.lineWidth = 10;
         ctx.strokeRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
@@ -193,7 +195,7 @@
                 ctx.fill();
             });
 
-            // Opponent Arrows (Points toward enemies)
+            // Opponent Arrows
             if (p.id !== playerId && isAlive) {
                 const dx = p.x - mySnake.x;
                 const dy = p.y - mySnake.y;
